@@ -19,18 +19,15 @@ import kotlin.random.Random
 
 open class ResourcePackHost(
     private val packs: Path,
-    threads: Int = 3
+    private val threads: Int = 3
 ) {
     private val logger = LoggerFactory.getLogger(this::class.java)
     private val hosted = HashMap<String, HostedPack>()
-    private val threadPool: ExecutorService
+    private val builder = ThreadFactoryBuilder().setNameFormat("Pack-Host-%d").build()
+    private val executor = Executors.newSingleThreadExecutor(this.builder)
 
     private var server: HttpServer? = null
-
-    init {
-        val nameFactory = ThreadFactoryBuilder().setNameFormat("Pack-Host-%d").build()
-        this.threadPool = Executors.newFixedThreadPool(threads, nameFactory)
-    }
+    private var pool: ExecutorService? = null
 
     fun getHostedPack(name: String): HostedPack? {
         val zipped = if (name.endsWith(".zip")) name else "$name.zip"
@@ -38,10 +35,11 @@ open class ResourcePackHost(
     }
 
     fun start(hostIp: String? = null, hostPort: Int = 24464, randomise: Boolean = false) {
-        this.threadPool.execute {
+        this.executor.execute {
             val restart = this.server !== null
             this.hosted.clear()
             this.server?.stop(0)
+            this.pool?.shutdownNow()
             try {
                 this.logger.info("${if (restart) "Restarting" else "Starting"} ResourcePackHost...")
                 var ip = hostIp
@@ -51,7 +49,8 @@ open class ResourcePackHost(
                 }
 
                 val server = HttpServer.create(InetSocketAddress("0.0.0.0", hostPort), 0)
-                server.executor = threadPool
+                this.pool = Executors.newFixedThreadPool(this.threads, this.builder)
+                server.executor = this.pool
 
                 val packs = this.packs.listDirectoryEntries("*.zip")
                 for (pack in packs) {
@@ -80,7 +79,8 @@ open class ResourcePackHost(
 
     fun shutdown() {
         this.server?.stop(0)
-        this.threadPool.shutdownNow()
+        this.pool?.shutdownNow()
+        this.executor.shutdownNow()
     }
 
     class HostedPack(val path: Path, val url: String, val hash: String)
